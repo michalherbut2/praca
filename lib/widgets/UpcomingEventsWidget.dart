@@ -1,15 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:most_app/helper/AnnouncementService.dart';
-import 'package:most_app/models/Announcement.dart';
 import 'package:provider/provider.dart';
-// <-- KROK A: Zmieniamy importy na Serwis i Model Ogłoszeń
-// import 'package:most_app/screens/AdminAddAnnouncementScreen_fixed.dart'; // Zakładam, że tu są Twoje klasy
+import '../helper/AuthService.dart';
+import '../helper/EventService.dart';
+import '../models/Event.dart';
+import '../screens/EventDetailsScreen.dart';
+import '../screens/SignInScreen.dart';
 import 'SectionHeader.dart';
 
-//
-// KROK 1: StatefulWidget bez zmian
-//
 class UpcomingEventsWidget extends StatefulWidget {
   const UpcomingEventsWidget({super.key});
 
@@ -18,16 +16,15 @@ class UpcomingEventsWidget extends StatefulWidget {
 }
 
 class _UpcomingEventsWidgetState extends State<UpcomingEventsWidget> {
-  // <-- KROK B: Zmieniamy nazwę Future
-  late Future<void> _fetchAnnouncementsFuture;
+  // Zmienna na Future do pobierania wydarzeń
+  late Future<void> _fetchEventsFuture;
 
   @override
   void initState() {
     super.initState();
-    // <-- KROK C: Zmieniamy serwis na AnnouncementsService
-    _fetchAnnouncementsFuture =
-        Provider.of<AnnouncementsService>(context, listen: false)
-            .fetchAnnouncements(); // i wołamy metodę fetchAnnouncements()
+    // Pobieramy wydarzenia przy inicjalizacji widgetu
+    _fetchEventsFuture =
+        Provider.of<EventService>(context, listen: false).fetchEvents();
   }
 
   @override
@@ -36,52 +33,48 @@ class _UpcomingEventsWidgetState extends State<UpcomingEventsWidget> {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         const SizedBox(height: 8),
-        // <-- KROK D: Zmieniamy tytuł sekcji
-        const SectionHeader(text: 'Ważne Ogłoszenia i Zapisy'),
+        // Nagłówek sekcji
+        const SectionHeader(text: 'Zapisy na wydarzenia'),
 
-        //
-        // KROK 2: FutureBuilder bez zmian
-        //
         FutureBuilder(
-          future: _fetchAnnouncementsFuture, // <-- Zmiana
+          future: _fetchEventsFuture,
           builder: (ctx, snapshot) {
-            // 1. STAN: Ładowanie
+            // 1. Ładowanie
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
             }
 
-            // 2. STAN: Błąd
+            // 2. Błąd
             if (snapshot.hasError) {
-              print(snapshot.error);
-              return const Center(
-                  child: Text('Nie udało się pobrać ogłoszeń.'));
+              return const Center(child: Text('Nie udało się pobrać wydarzeń.'));
             }
 
-            // 3. STAN: Sukces (dane pobrane)
-            // <-- KROK E: Zmieniamy Consumer na AnnouncementsService
-            return Consumer<AnnouncementsService>(
-              builder: (ctx, announcementService, child) {
-                // <-- KROK F: NOWA LOGIKA FILTROWANIA
-                // Bierzemy tylko te ogłoszenia, które admin "przypiął"
-                final pinnedAnnouncements = announcementService.announcements
-                    .where((a) => a.pinned == true)
-                    .toList();
+            // 3. Sukces - budujemy listę
+            return Consumer<EventService>(
+              builder: (ctx, eventService, child) {
+                // Filtrowanie: tylko te, gdzie allowRSVP jest true ORAZ data jest w przyszłości
+                final rsvpEvents = eventService.events.where((e) {
+                  final isFuture = e.startDate.isAfter(DateTime.now());
+                  return e.allowRsvp && isFuture;
+                }).toList();
 
-                if (pinnedAnnouncements.isEmpty) {
+                // Opcjonalnie: sortowanie od najbliższego
+                rsvpEvents.sort((a, b) => a.startDate.compareTo(b.startDate));
+
+                if (rsvpEvents.isEmpty) {
                   return const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(16.0),
-                        child: Text('Brak przypiętych ogłoszeń.',
-                            style: TextStyle(color: Colors.grey, fontSize: 16)),
-                      ));
+                    child: Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Text('Brak aktywnych zapisów na wydarzenia.',
+                          style: TextStyle(color: Colors.grey, fontSize: 16)),
+                    ),
+                  );
                 }
 
-                //
-                // KROK G: Mapujemy na nowy widget PinnedAnnouncementCard
-                //
+                // Mapowanie na widgety kart
                 return Column(
-                  children: pinnedAnnouncements
-                      .map((ann) => PinnedAnnouncementCard(announcement: ann))
+                  children: rsvpEvents
+                      .map((event) => EventRsvpCard(event: event))
                       .toList(),
                 );
               },
@@ -95,75 +88,113 @@ class _UpcomingEventsWidgetState extends State<UpcomingEventsWidget> {
 }
 
 //
-// KROK H: Nowy widget do wyświetlania przypiętego ogłoszenia
-// Zamiast starej EventCard
+// Widget karty dla wydarzenia z zapisami
 //
-class PinnedAnnouncementCard extends StatelessWidget {
-  final Announcement announcement;
+class EventRsvpCard extends StatelessWidget {
+  final Event event;
 
-  const PinnedAnnouncementCard({super.key, required this.announcement});
+  const EventRsvpCard({super.key, required this.event});
 
   @override
   Widget build(BuildContext context) {
-    // Prosta logika do wybierania ikonki i koloru na podstawie kategorii
-    IconData categoryIcon;
-    Color categoryColor;
+    // Formatowanie daty (np. 27.11.2025 18:00)
+    final dateFormat = DateFormat('dd.MM.yyyy HH:mm');
 
-    switch (announcement.category) {
-      case 'IMPORTANT':
-        categoryIcon = Icons.warning_amber_rounded;
-        categoryColor = Colors.red[600]!;
-        break;
-      case 'EVENTS':
-        categoryIcon = Icons.calendar_month_outlined;
-        categoryColor = Colors.blue[600]!;
-        break;
-      case 'SPIRITUALITY':
-        categoryIcon = Icons.church;
-        categoryColor = Colors.purple[600]!;
-        break;
-      default:
-        categoryIcon = Icons.push_pin;
-        categoryColor = Colors.grey[700]!;
-    }
+    // Sprawdzamy czy użytkownik jest zalogowany
+    final authService = Provider.of<AuthService>(context);
+    final isLoggedIn = authService.isLoggedIn;
 
     return Card(
-        elevation: 4,
-        margin: const EdgeInsets.symmetric(vertical: 8.0),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15.0),
-        ),
-        clipBehavior: Clip.antiAlias,
+      elevation: 4,
+      margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(15.0),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () {
+          if (isLoggedIn) {
+            // Jeśli zalogowany -> idź do szczegółów wydarzenia
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => EventDetailsScreen(event: event),
+              ),
+            );
+          } else {
+            // Jeśli NIEzalogowany -> idź do logowania
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text("Musisz się zalogować, aby zapisać się na wydarzenie.")),
+            );
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const SignInScreen(),
+              ),
+            );
+          }
+        },
         child: Container(
-          // Kolorowa belka z boku dla wyróżnienia
+          // Kolor paska: Zielony (ok) lub Pomarańczowy (wymaga akcji/logowania)
           decoration: BoxDecoration(
-            border: Border(left: BorderSide(color: categoryColor, width: 8)),
+            border: Border(
+                left: BorderSide(
+                    color: isLoggedIn ? Colors.green : Colors.orange,
+                    width: 8)),
             color: Colors.white,
           ),
           child: ListTile(
-            leading: Icon(categoryIcon, color: categoryColor, size: 40),
-            title: Text(
-              announcement.title,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+            contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            // Ikonka: Dostępne lub Kłódka
+            leading: Icon(
+              isLoggedIn
+                  ? Icons.event_available_rounded
+                  : Icons.lock_outline_rounded,
+              color: isLoggedIn ? Colors.green : Colors.orange,
+              size: 40,
             ),
-            subtitle: Text(
-              announcement.content,
-              maxLines: 2,
+            title: Text(
+              event.title,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            isThreeLine: true,
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Icon(Icons.access_time, size: 14, color: Colors.grey),
+                    const SizedBox(width: 4),
+                    Text(
+                      dateFormat.format(event.startDate),
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                // Tekst zachęty zależny od stanu logowania
+                Text(
+                  isLoggedIn
+                      ? "Kliknij, aby się zapisać!"
+                      : "Zaloguj się, aby się zapisać",
+                  style: TextStyle(
+                    color: isLoggedIn
+                        ? Theme.of(context).primaryColor
+                        : Colors.orange[800],
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
             trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
-            onTap: () {
-              // TODO: Zrobić nawigację do pełnego widoku ogłoszenia
-              print("Otwórz ogłoszenie: ${announcement.id}");
-              // Navigator.push(
-              //   context,
-              //   MaterialPageRoute(
-              //     builder: (context) => EventDetailsScreen(event: event),
-              //   ),
-              // );
-            },
           ),
-        ));
+        ),
+      ),
+    );
   }
 }
